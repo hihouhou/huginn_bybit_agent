@@ -66,19 +66,19 @@ module Agents
     form_configurable :windows, type: :string
     form_configurable :expected_receive_period_in_days, type: :string
     form_configurable :changes_only, type: :boolean
-    form_configurable :type, type: :array, values: ['get_balances', 'order_history']
+    form_configurable :type, type: :array, values: ['get_balances', 'order_history', 'trade_history']
     def validate_options
-      errors.add(:base, "type has invalid value: should be 'get_balances' 'order_history'") if interpolated['type'].present? && !%w(get_balances order_history).include?(interpolated['type'])
+      errors.add(:base, "type has invalid value: should be 'get_balances' 'order_history' 'trade_history'") if interpolated['type'].present? && !%w(get_balances order_history trade_history).include?(interpolated['type'])
 
-      unless options['apikey'].present? || !['get_balances', 'order_history'].include?(options['type'])
+      unless options['apikey'].present? || !['get_balances', 'order_history', 'trade_history'].include?(options['type'])
         errors.add(:base, "apikey is a required field")
       end
 
-      unless options['secretkey'].present? || !['get_balances', 'order_history'].include?(options['type'])
+      unless options['secretkey'].present? || !['get_balances', 'order_history', 'trade_history'].include?(options['type'])
         errors.add(:base, "secretkey is a required field")
       end
 
-      unless options['limit'].present? || !['order_history'].include?(options['type'])
+      unless options['limit'].present? || !['order_history', 'trade_history'].include?(options['type'])
         errors.add(:base, "limit is a required field")
       end
 
@@ -130,6 +130,72 @@ module Agents
         OpenSSL::HMAC.hexdigest('sha256', interpolated['secretkey'], param_str)
     end
 
+    def trade_history(base_url)
+
+      time_stamp = DateTime.now.strftime('%Q')
+      endPoint = "/spot/v3/private/my-trades"
+      tradeLinkId = SecureRandom.uuid
+      payload = "tradeLinkId=" + tradeLinkId + '&limit' + interpolated['limit']
+      signature = genSignature(payload,time_stamp)
+      payload="?"+payload
+
+      if interpolated['debug'] == 'true'
+        log "signature"
+        log signature
+      end
+      fullUrl = base_url + endPoint + payload
+      uri = URI.parse(fullUrl)
+      request = Net::HTTP::Get.new(uri)
+      request["X-BAPI-SIGN"] = signature
+      request["X-BAPI-API-KEY"] = interpolated['apikey']
+      request["X-BAPI-TIMESTAMP"] = time_stamp
+      request["X-BAPI-RECV-WINDOW"] = interpolated['windows']
+
+      req_options = {
+        use_ssl: uri.scheme == "https",
+      }
+
+      response = Net::HTTP.start(uri.hostname, uri.port, req_options) do |http|
+        http.request(request)
+      end
+
+      log_curl_output(response.code,response.body)
+
+      payload = JSON.parse(response.body)
+      if interpolated['changes_only'] == 'true'
+        if payload.to_s != memory['last_status']
+          if "#{memory['last_status']}" == ''
+            payload['result']['list'].each do | trade |
+              create_event :payload => trade
+            end
+          else
+            last_status = memory['last_status'].gsub("=>", ": ").gsub(": nil,", ": null,")
+            last_status = JSON.parse(last_status)
+            payload['result']['list'].each do | trade |
+              found = false
+              last_status['result']['list'].each do | tradebis |
+                if trade == tradebis
+                  found = true
+                end
+              end
+              if interpolated['debug'] == 'true'
+                log found
+              end
+              if found == false
+                create_event :payload => trade
+              end
+            end
+          end
+          memory['last_status'] = payload.to_s
+        end
+      else
+        create_event payload: payload
+        if payload.to_s != memory['last_status']
+          memory['last_status'] = payload.to_s
+        end
+      end
+    end
+
     def order_history(base_url)
 
       time_stamp = DateTime.now.strftime('%Q')
@@ -148,7 +214,7 @@ module Agents
       request = Net::HTTP::Get.new(uri)
       request["X-BAPI-SIGN"] = signature
       request["X-BAPI-API-KEY"] = interpolated['apikey']
-      request["X-BAPI-TIMESTAMP"] = time_stamp 
+      request["X-BAPI-TIMESTAMP"] = time_stamp
       request["X-BAPI-RECV-WINDOW"] = interpolated['windows']
     
       req_options = {
@@ -270,8 +336,8 @@ module Agents
         get_balances(base_url)
       when "order_history"
         order_history(base_url)
-      when "ticker"
-        ticker(base_url_pub)
+      when "trade_history"
+        trade_history(base_url)
       else
         log "Error: type has an invalid value (#{type})"
       end
