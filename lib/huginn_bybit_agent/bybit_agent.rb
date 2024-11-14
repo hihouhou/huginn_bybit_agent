@@ -199,9 +199,9 @@ module Agents
     def order_history(base_url)
 
       time_stamp = DateTime.now.strftime('%Q')
-      endPoint = "/spot/v3/private/history-orders"
+      endPoint = "/v5/order/history"
       orderLinkId = SecureRandom.uuid
-      payload = "orderLinkId=" + orderLinkId + '&limit' + interpolated['limit']
+      payload = "orderLinkId=" + orderLinkId + '&limit' + interpolated['limit'] + '&category=spot'
       signature = genSignature(payload,time_stamp)
       payload="?"+payload
     
@@ -229,45 +229,53 @@ module Agents
 
       payload = JSON.parse(response.body)
       if interpolated['changes_only'] == 'true'
-        if payload.to_s != memory['last_status']
-          if "#{memory['last_status']}" == ''
-            payload['result']['list'].each do | order |
-              create_event :payload => order
+        if payload != memory['last_status']
+          payload['result']['list'].each do | order |
+            found = false
+            if interpolated['debug'] == 'true'
+              log "order"
+              log order
             end
-          else
-            last_status = memory['last_status'].gsub("=>", ": ").gsub(": nil,", ": null,")
-            last_status = JSON.parse(last_status)
-            payload['result']['list'].each do | order |
-              found = false
-              last_status['result']['list'].each do | orderbis |
-                if order == orderbis
+            if !memory['last_status'].nil? and memory['last_status'].present?
+              if interpolated['debug'] == 'true'
+                log "memory"
+                log memory['last_status']
+              end
+              last_status = memory['last_status']
+              last_status['result']['list'].each do |orderbis|
+                if order['id'] == orderbis['id']
                   found = true
                 end
-              end
-              if interpolated['debug'] == 'true'
-                log found
-              end
-              if found == false
-                create_event :payload => order
+                if interpolated['debug'] == 'true'
+                  log "orderbis"
+                  log orderbis
+                  log "found is #{found}!"
+                end
               end
             end
+            if found == false
+              create_event payload: order
+            end
           end
-          memory['last_status'] = payload.to_s
+        else
+          if interpolated['debug'] == 'true'
+            log "nothing to compare"
+          end
         end
       else
         create_event payload: payload
-        if payload.to_s != memory['last_status']
-          memory['last_status'] = payload.to_s
+        if payload != memory['last_status']
         end
       end
+      memory['last_status'] = payload
     end
 
     def get_balances(base_url)
 
       time_stamp = DateTime.now.strftime('%Q')
-      endPoint = "/spot/v3/private/account"
+      endPoint = "/v5/account/wallet-balance"
       orderLinkId = SecureRandom.uuid
-      payload = "orderLinkId=" + orderLinkId
+      payload = "accountType=UNIFIED" 
       signature = genSignature(payload,time_stamp)
       payload="?"+payload
     
@@ -295,37 +303,45 @@ module Agents
 
       payload = JSON.parse(response.body)
       if interpolated['changes_only'] == 'true'
-        if payload.to_s != memory['last_status']
-          if "#{memory['last_status']}" == ''
-            payload['result']['balances'].each do | balance |
-              create_event :payload => balance
+        if payload != memory['last_status']
+          payload['result']['list'][0]['coin'].each do | coin |
+            found = false
+            if interpolated['debug'] == 'true'
+              log "coin"
+              log coin
             end
-          else
-            last_status = memory['last_status'].gsub("=>", ": ").gsub(": nil,", ": null,")
-            last_status = JSON.parse(last_status)
-            payload['result']['balances'].each do | balance |
-              found = false
-              last_status['result']['balances'].each do | balancebis |
-                if balance == balancebis
+            if !memory['last_status'].nil? and memory['last_status'].present?
+              if interpolated['debug'] == 'true'
+                log "memory"
+                log memory['last_status']
+              end
+              last_status = memory['last_status']
+              last_status['result']['list'][0]['coin'].each do |coinbis|
+                if coin['id'] == coinbis['id']
                   found = true
                 end
-              end
-              if interpolated['debug'] == 'true'
-                log found
-              end
-              if found == false
-                create_event :payload => balance
+                if interpolated['debug'] == 'true'
+                  log "coinbis"
+                  log coinbis
+                  log "found is #{found}!"
+                end
               end
             end
+            if found == false
+              create_event payload: coin
+            end
           end
-          memory['last_status'] = payload.to_s
+        else
+          if interpolated['debug'] == 'true'
+            log "nothing to compare"
+          end
         end
       else
         create_event payload: payload
-        if payload.to_s != memory['last_status']
-          memory['last_status'] = payload.to_s
+        if payload != memory['last_status']
         end
       end
+      memory['last_status'] = payload
     end
 
     def trigger_action()
